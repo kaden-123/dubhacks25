@@ -9,9 +9,9 @@ from dataclasses import dataclass
 class PoseComparisonConfig:
     """Configuration for pose comparison"""
     
-    # Weights for scoring
-    pose_weight: float = 0.7
-    motion_weight: float = 0.3
+    # Weights for scoring - more balanced for better user experience
+    pose_weight: float = 0.6
+    motion_weight: float = 0.4
     
     # DTW settings
     dtw_enabled: bool = True
@@ -28,10 +28,10 @@ class PoseComparisonConfig:
     # Performance settings
     max_sequence_length: int = 100
     
-    # LLM feedback thresholds
-    angle_difference_threshold: float = 5.0  # Only mention angles if difference > 5°
-    position_difference_threshold: float = 0.05  # Only mention positions if difference > 0.05
-    min_score_threshold: float = 0.8  # Only provide detailed feedback if score < 0.8
+    # LLM feedback thresholds - more lenient for better user experience
+    angle_difference_threshold: float = 10.0  # Only mention angles if difference > 10°
+    position_difference_threshold: float = 0.08  # Only mention positions if difference > 0.08
+    min_score_threshold: float = 0.7  # Only provide detailed feedback if score < 0.7
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary"""
@@ -78,10 +78,13 @@ DEFAULT_CONFIG = PoseComparisonConfig()
 
 # Preset configurations
 DANCE_CONFIG = PoseComparisonConfig(
-    pose_weight=0.6,
-    motion_weight=0.4,
+    pose_weight=0.5,
+    motion_weight=0.5,
     dtw_enabled=True,
-    smoothing_window=7
+    smoothing_window=7,
+    angle_difference_threshold=12.0,
+    position_difference_threshold=0.1,
+    min_score_threshold=0.65
 )
 
 POSITION_FOCUSED_CONFIG = PoseComparisonConfig(

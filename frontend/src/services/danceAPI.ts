@@ -49,6 +49,36 @@ export interface SessionStatusResponse {
   session_duration: number;
 }
 
+export interface FeedbackItem {
+  timestamp: number;
+  severity: string;
+  category: string;
+  body_part: string;
+  feedback_text: string;
+  expected_value?: number;
+  actual_value?: number;
+  difference?: number;
+}
+
+export interface TimeframeFeedback {
+  start_time: number;
+  end_time: number;
+  duration: number;
+  overall_score: number;
+  dominant_issues: string[];
+  feedback_items: FeedbackItem[];
+}
+
+export interface FeedbackSummaryResponse {
+  session_duration: number;
+  overall_score: number;
+  total_feedback_items: number;
+  timeframes: TimeframeFeedback[];
+  most_common_issues: [string, number][];
+  improvement_suggestions: string[];
+  error?: string;
+}
+
 export interface SessionFeedbackResponse {
   session_id: string;
   total_feedback_items: number;
@@ -96,6 +126,12 @@ class DanceAPI {
   async endSession(): Promise<StartSessionResponse> {
     return this.request<StartSessionResponse>('/api/sessions/end', {
       method: 'POST',
+    });
+  }
+
+  async getFeedbackSummary(): Promise<FeedbackSummaryResponse> {
+    return this.request<FeedbackSummaryResponse>('/api/sessions/feedback-summary', {
+      method: 'GET',
     });
   }
 

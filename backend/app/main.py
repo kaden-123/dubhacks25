@@ -20,7 +20,7 @@ from app.data.config import settings
 # Import services
 from app.services.pose_comparison_service import PoseComparisonService
 from app.services.pose_comparison_config import PoseComparisonConfig, DEFAULT_CONFIG, DANCE_CONFIG
-from app.services.live_feedback_service import LiveFeedbackService, SnapshotData
+from app.services.feedback_summary_service import FeedbackSummaryService, FeedbackSummary
 from app.services.angle_calculator import AngleCalculator
 from app.services.scoring import ScoringService
 from app.services.feedback_generation import FeedbackGenerationService
@@ -138,7 +138,7 @@ hands = mp_hands.Hands(
 
 # Global services (INTERNAL - Never exposed to API)
 comparison_service: Optional[PoseComparisonService] = None
-live_feedback_service = LiveFeedbackService()  # Internal LLM service
+feedback_summary_service = FeedbackSummaryService()  # Summary feedback service
 scoring_service = ScoringService()
 feedback_generation_service = FeedbackGenerationService()  # Internal LLM service
 angle_calculator = AngleCalculator()
@@ -174,9 +174,21 @@ def load_reference_video(video_name: str) -> bool:
     """
     global comparison_service
     try:
+        # Map song names to video file names
+        video_mapping = {
+            "kaden": "test",
+            "kaden test": "test",
+            "magnetic": "magnetic",
+            "go!": "magnetic"  # Default GO! to magnetic for now
+        }
+        
+        # Get the actual video file name
+        actual_video_name = video_mapping.get(video_name, video_name)
+        print(f"DEBUG: Mapping '{video_name}' to '{actual_video_name}'")
+        
         # Get the correct path relative to app directory
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        data_path = os.path.join(current_dir, "data", "processed_poses", f"{video_name}_poses.npy")
+        data_path = os.path.join(current_dir, "data", "processed_poses", f"{actual_video_name}_poses.npy")
         print(f"DEBUG: Looking for reference video at: {data_path}")
 
         if not os.path.exists(data_path):
@@ -207,8 +219,18 @@ def load_reference_video(video_name: str) -> bool:
             global comparison_service
             comparison_service = PoseComparisonService(reference_poses_list, current_config)
             current_session['reference_video'] = video_name
+            
+            # Store video duration (this should ideally come from video metadata)
+            video_durations = {
+                "magnetic": 159.869002,  # 2:39
+                "test": 60.0,            # 1:00 for test video
+                "go!": 159.869002        # Same as magnetic for now
+            }
+            current_session['video_duration'] = video_durations.get(actual_video_name, 159.869002)
+            
             print(f"✅ Loaded {len(reference_poses_list)} reference poses from {video_name}")
             print(f"✅ Comparison service initialized: {comparison_service is not None}")
+            print(f"✅ Video duration: {current_session['video_duration']}s")
             return True
         except Exception as e:
             print(f"ERROR: Failed to initialize PoseComparisonService: {e}")
@@ -220,12 +242,30 @@ def load_reference_video(video_name: str) -> bool:
                 minimal_config = PoseComparisonConfig()
                 comparison_service = PoseComparisonService(reference_poses_list, minimal_config)
                 current_session['reference_video'] = video_name
+                
+                # Store video duration
+                video_durations = {
+                    "magnetic": 159.869002,
+                    "test": 60.0,
+                    "go!": 159.869002
+                }
+                current_session['video_duration'] = video_durations.get(actual_video_name, 159.869002)
+                
                 print(f"✅ Comparison service initialized with minimal config")
                 return True
             except Exception as e2:
                 print(f"ERROR: Failed with minimal config too: {e2}")
                 # Return True anyway to allow the session to continue
                 current_session['reference_video'] = video_name
+                
+                # Store video duration
+                video_durations = {
+                    "magnetic": 159.869002,
+                    "test": 60.0,
+                    "go!": 159.869002
+                }
+                current_session['video_duration'] = video_durations.get(actual_video_name, 159.869002)
+                
                 print(f"✅ Loaded {len(reference_poses_list)} reference poses from {video_name} (without comparison service)")
                 return True
 
@@ -237,67 +277,66 @@ def load_reference_video(video_name: str) -> bool:
         return False
 
 
-def generate_llm_feedback(image_data: str, comparison_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def generate_feedback_summary() -> Optional[Dict[str, Any]]:
     """
-    Generate LLM-powered feedback using LiveFeedbackService (INTERNAL).
-
-    This function calls the internal LiveFeedbackService which uses OpenAI.
-    The OpenAI client and all LLM details are NEVER exposed to the API layer.
-
-    Args:
-        image_data: Base64 encoded image
-        comparison_result: Pose comparison results
-
+    Generate comprehensive feedback summary from collected pose data.
+    
     Returns:
-        Optional[Dict]: Feedback dictionary with:
-            - feedback_text: str (processed text only, NO OpenAI metadata)
-            - severity: str ("high", "medium", "low")
-            - focus_areas: List[str] (body parts needing attention)
-            - is_positive: bool (encouragement vs correction)
-            - context: Dict (performance context)
-        Returns None if no feedback generated.
+        Feedback summary dictionary with timeframes and clickable feedback items:
+        {
+            'session_duration': float,
+            'overall_score': float,
+            'total_feedback_items': int,
+            'timeframes': List[Dict],  # Timeframe feedback with clickable timestamps
+            'most_common_issues': List[Tuple[str, int]],
+            'improvement_suggestions': List[str]
+        }
     """
     try:
-        # Convert comparison data to SnapshotData format
-        snapshot_data = SnapshotData(
-            timestamp=time.time(),
-            frame_base64=image_data,
-            pose_similarity=comparison_result.get('pose_score', 0.0),
-            motion_similarity=comparison_result.get('motion_score', 0.0),
-            combined_score=comparison_result.get('combined_score', 0.0),
-            errors=[],  # TODO: Convert angle/position differences to error format
-            best_match_idx=comparison_result.get('best_match_idx', 0),
-            reference_timestamp=0.0,
-            timing_offset=0.0
-        )
-
-        # Call INTERNAL service (OpenAI interaction happens here, internally)
-        feedback_result = live_feedback_service.process_snapshot(snapshot_data)
-
-        if feedback_result:
-            # Return complete feedback object (NO OpenAI metadata, just processed results)
-            return {
-                'feedback_text': feedback_result.get('feedback_text', 'Keep practicing!'),
-                'severity': feedback_result.get('severity', 'medium'),
-                'focus_areas': feedback_result.get('focus_areas', []),
-                'is_positive': feedback_result.get('is_positive', False),
-                'context': feedback_result.get('context', {})
-            }
-        else:
-            # No feedback generated (score was good enough)
+        if not current_session.get('pose_data'):
             return None
-
-    except Exception as e:
-        print(f"LLM feedback generation failed: {e}")
-        # Return fallback feedback
-        combined_score = comparison_result.get('combined_score', 0.0)
+            
+        # Generate summary using the collected pose data
+        summary = feedback_summary_service.generate_summary(
+            pose_data=current_session['pose_data'],
+            reference_service=comparison_service
+        )
+        
+        # Convert to API-friendly format
         return {
-            'feedback_text': "Great pose! Keep it up!" if combined_score >= 0.8 else "Keep practicing!",
-            'severity': 'low' if combined_score >= 0.8 else 'medium',
-            'focus_areas': [],
-            'is_positive': combined_score >= 0.8,
-            'context': {}
+            'session_duration': summary.session_duration,
+            'overall_score': summary.overall_session_score,
+            'total_feedback_items': summary.total_feedback_items,
+            'timeframes': [
+                {
+                    'start_time': tf.start_time,
+                    'end_time': tf.end_time,
+                    'duration': tf.timeframe_duration,
+                    'overall_score': tf.overall_score,
+                    'dominant_issues': tf.dominant_issues,
+                    'feedback_items': [
+                        {
+                            'timestamp': item.timestamp,
+                            'severity': item.severity,
+                            'category': item.category,
+                            'body_part': item.body_part,
+                            'feedback_text': item.feedback_text,
+                            'expected_value': item.expected_value,
+                            'actual_value': item.actual_value,
+                            'difference': item.difference
+                        }
+                        for item in tf.feedback_items
+                    ]
+                }
+                for tf in summary.timeframes
+            ],
+            'most_common_issues': summary.most_common_issues,
+            'improvement_suggestions': summary.improvement_suggestions
         }
+        
+    except Exception as e:
+        print(f"Feedback summary generation failed: {e}")
+        return None
 
 
 def process_image_snapshot(image_data: str, video_timestamp: float = None) -> Dict[str, Any]:
@@ -476,8 +515,8 @@ def process_image_snapshot(image_data: str, video_timestamp: float = None) -> Di
             print(f"🎯 DEBUG: No comparison service available, creating fallback result")
             current_timestamp = video_timestamp if video_timestamp is not None else time.time()
             comparison_result = {
-                'combined_score': 0.5 if pose_landmarks is not None else 0.0,  # Give some credit if pose detected
-                'pose_score': 0.5 if pose_landmarks is not None else 0.0,
+                'combined_score': 0.0,  # Always 0 when no comparison service
+                'pose_score': 0.0,
                 'motion_score': 0.0,
                 'dtw_score': 0.0,
                 'best_match_index': 0,
@@ -488,14 +527,20 @@ def process_image_snapshot(image_data: str, video_timestamp: float = None) -> Di
 
         # Generate detailed feedback using LiveFeedbackService (internal LLM call)
         # Returns processed feedback dict (NO OpenAI metadata)
-        feedback_data = generate_llm_feedback(image_data, comparison_result)
+        # No live feedback generation - feedback will be generated on pause/video end
+        feedback_data = None
 
-        # Store in session data
-        current_session['pose_data'].append({
-            'timestamp': time.time(),
-            'pose_landmarks': pose_landmarks,
-            'comparison_result': comparison_result
-        })
+        # Store in session data ONLY if pose landmarks were detected
+        # This ensures failed pose detection doesn't contribute to accuracy calculation
+        if pose_landmarks is not None:
+            current_session['pose_data'].append({
+                'timestamp': time.time(),
+                'pose_landmarks': pose_landmarks,
+                'comparison_result': comparison_result
+            })
+            print(f"✅ Stored pose data with score: {comparison_result.get('combined_score', 0.0):.3f}")
+        else:
+            print(f"❌ Skipping pose data storage - no landmarks detected")
 
         # Store complete feedback record for session summary (if feedback was generated)
         # This data structure is used by FeedbackGenerationService.generate_session_summary()
@@ -633,7 +678,7 @@ async def start_session():
     }
 
     # Reset services for new session
-    live_feedback_service.reset()
+    feedback_summary_service = FeedbackSummaryService()  # Fresh instance for new session
     scoring_service.reset()
 
     return StartSessionResponse(
@@ -735,6 +780,37 @@ async def get_session_status():
     )
 
 
+@app.get("/api/sessions/feedback-summary")
+async def get_feedback_summary():
+    """
+    Get comprehensive feedback summary with clickable timeframes.
+    
+    This endpoint is called when user pauses or video ends to get detailed feedback
+    organized by timeframes with clickable timestamps.
+
+    Returns:
+        Dict with feedback summary including timeframes and clickable feedback items
+    """
+    try:
+        summary = generate_feedback_summary()
+        if summary is None:
+            return {
+                "error": "No pose data available for analysis",
+                "session_duration": 0,
+                "overall_score": 0,
+                "total_feedback_items": 0,
+                "timeframes": [],
+                "most_common_issues": [],
+                "improvement_suggestions": ["No data available for analysis."]
+            }
+        
+        return summary
+        
+    except Exception as e:
+        print(f"Error generating feedback summary: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate feedback summary: {str(e)}")
+
+
 # ============================================================================
 # API ENDPOINTS - POSE PROCESSING
 # ============================================================================
@@ -768,6 +844,25 @@ async def process_snapshot(request: ImageSnapshotRequest):
         )
 
     try:
+        # Check if video has ended - stop processing if so
+        if request.video_timestamp is not None and current_session.get('reference_video'):
+            # Get video duration from session data
+            video_duration = current_session.get('video_duration', 159.869002)
+            
+            if request.video_timestamp >= video_duration:
+                print(f"🎬 Video ended at {request.video_timestamp}s (duration: {video_duration}s), stopping processing")
+                return ProcessSnapshotResponse(
+                    timestamp=time.time(),
+                    pose_landmarks=None,
+                    hand_landmarks=[],
+                    hand_classifications=[],
+                    preprocessed_angles={},
+                    comparison_result=None,
+                    live_feedback="Video session ended",
+                    success=False,
+                    error="Video session completed"
+                )
+        
         result = process_image_snapshot(request.image, request.video_timestamp)
         print(f"📸 Processed snapshot, returning result: {result.get('success', False)}")
         return ProcessSnapshotResponse(**result)

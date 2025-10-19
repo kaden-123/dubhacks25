@@ -3,12 +3,8 @@ import cv2
 import mediapipe as mp
 from typing import List, Dict, Any, Tuple, Optional
 import math
-try:
-    from dtaidistance import dtw
-    DTW_AVAILABLE = True
-except ImportError:
-    print("Warning: dtaidistance not available, DTW disabled")
-    DTW_AVAILABLE = False
+# DTW is now implemented as a custom algorithm
+DTW_AVAILABLE = True
 import time
 from collections import deque
 from .pose_comparison_config import PoseComparisonConfig, DEFAULT_CONFIG
@@ -157,7 +153,24 @@ class PoseComparisonService:
         
         if norm_user > 0 and norm_ref > 0:
             cosine_similarity = dot_product / (norm_user * norm_ref)
-            return max(0.0, min(1.0, cosine_similarity))  # Clamp between 0 and 1
+            
+            # Make the scoring more sensitive by adding Euclidean distance penalty
+            euclidean_distance = np.linalg.norm(user_vec - ref_vec)
+            max_possible_distance = np.linalg.norm(user_vec) + np.linalg.norm(ref_vec)
+            
+            # Combine cosine similarity with Euclidean distance penalty
+            # Higher Euclidean distance = lower score
+            distance_penalty = 1.0 - (euclidean_distance / max_possible_distance)
+            distance_penalty = max(0.0, distance_penalty)
+            
+            # Weighted combination: 85% cosine similarity, 15% distance penalty (more lenient)
+            final_score = 0.85 * cosine_similarity + 0.15 * distance_penalty
+            
+            # Apply lighter penalty for low cosine similarity
+            if cosine_similarity < 0.2:  # Only penalize very low similarity
+                final_score *= 0.8  # Even less harsh penalty
+            
+            return max(0.0, min(1.0, final_score))  # Clamp between 0 and 1
         
         return 0.0
     
@@ -173,14 +186,36 @@ class PoseComparisonService:
         user_vec = user_vec[:min_length]
         ref_vec = ref_vec[:min_length]
         
-        # Calculate cosine similarity for motion direction
+        # Calculate motion similarity with multiple factors
         dot_product = np.dot(user_vec, ref_vec)
         norm_user = np.linalg.norm(user_vec)
         norm_ref = np.linalg.norm(ref_vec)
         
         if norm_user > 0 and norm_ref > 0:
+            # Direction similarity (cosine similarity)
             cosine_similarity = dot_product / (norm_user * norm_ref)
-            return max(0.0, min(1.0, cosine_similarity))
+            
+            # Speed similarity - how similar are the motion magnitudes?
+            speed_ratio = min(norm_user, norm_ref) / max(norm_user, norm_ref)
+            
+            # Euclidean distance penalty for motion vectors
+            euclidean_distance = np.linalg.norm(user_vec - ref_vec)
+            max_possible_distance = norm_user + norm_ref
+            distance_penalty = 1.0 - (euclidean_distance / max_possible_distance)
+            distance_penalty = max(0.0, distance_penalty)
+            
+            # Combine factors: 50% direction, 30% speed, 20% distance
+            motion_similarity = (0.5 * cosine_similarity + 
+                               0.3 * speed_ratio + 
+                               0.2 * distance_penalty)
+            
+            # Apply much lighter penalties for direction matching - be very forgiving
+            if cosine_similarity < 0.1:  # Very different directions
+                motion_similarity *= 0.8  # Very light penalty
+            elif cosine_similarity < 0.3:  # Moderately different directions
+                motion_similarity *= 0.9  # Very light penalty
+            
+            return max(0.0, min(1.0, motion_similarity))
         
         return 0.0
     
@@ -231,20 +266,22 @@ class PoseComparisonService:
     
     def _apply_dynamic_time_warping(self, user_sequence: List[np.ndarray], 
                                   reference_sequence: List[np.ndarray]) -> Tuple[float, List[Tuple[int, int]]]:
-        """Apply Dynamic Time Warping to align user and reference sequences."""
-        if len(user_sequence) < 2 or len(reference_sequence) < 2:
+        """
+        Apply Dynamic Time Warping to align user and reference sequences.
+        Implements the full mathematical DTW algorithm as described in the documentation.
+        """
+        if not user_sequence or not reference_sequence:
             return 0.0, []
         
-        # Limit sequence length for performance (further reduced for better performance)
-        max_seq_length = min(30, self.dtw_window)  # Further reduce for better performance
+        # Limit sequence length for performance
+        max_seq_length = min(50, self.dtw_window)
         user_seq = user_sequence[-max_seq_length:] if len(user_sequence) > max_seq_length else user_sequence
         ref_seq = reference_sequence[-max_seq_length:] if len(reference_sequence) > max_seq_length else reference_sequence
         
         # Early exit for very short sequences
-        if len(user_seq) < 3 or len(ref_seq) < 3:
+        if len(user_seq) < 2 or len(ref_seq) < 2:
             return 0.0, []
         
-        # Ensure all arrays in sequences have the same shape
         try:
             # Convert to numpy arrays and ensure they're 2D
             user_seq_array = np.array([seq.flatten() if isinstance(seq, np.ndarray) else seq for seq in user_seq])
@@ -260,29 +297,112 @@ class PoseComparisonService:
             return 0.0, []
         
         try:
-            # Use a simpler DTW approach that handles arrays better
-            # Flatten the arrays to 1D and ensure correct data type for distance_fast
-            user_flat = user_seq_array.flatten().astype(np.float64)
-            ref_flat = ref_seq_array.flatten().astype(np.float64)
+            N, M = len(user_seq_array), len(ref_seq_array)
             
-            # Calculate DTW distance using the distance_fast method
-            if DTW_AVAILABLE:
-                distance = dtw.distance_fast(user_flat, ref_flat)
-            else:
-                # Fallback to simple Euclidean distance
-                distance = np.linalg.norm(user_flat - ref_flat)
+            # Step 1: Create local distance matrix D (N x M)
+            # D[i,j] = d(x_i, y_j) where d is Euclidean distance
+            D = np.zeros((N, M))
+            for i in range(N):
+                for j in range(M):
+                    D[i, j] = np.linalg.norm(user_seq_array[i] - ref_seq_array[j])
             
-            # Convert distance to similarity score (0-1)
-            # Normalize by the maximum possible distance (sum of sequence lengths)
-            max_distance = len(user_flat) + len(ref_flat)
-            similarity = max(0.0, 1.0 - (distance / max_distance)) if max_distance > 0 else 0.0
+            # Step 2: Create accumulated cost matrix C (N x M)
+            # C[i,j] = minimum cumulative distance to align X[1:i] and Y[1:j]
+            C = np.full((N, M), np.inf)
             
-            # Return empty path since we're using distance_fast
-            return similarity, []
+            # Boundary conditions
+            C[0, 0] = D[0, 0]
+            
+            # Fill first row: C[i,0] = D[i,0] + C[i-1,0]
+            for i in range(1, N):
+                C[i, 0] = D[i, 0] + C[i-1, 0]
+            
+            # Fill first column: C[0,j] = D[0,j] + C[0,j-1]
+            for j in range(1, M):
+                C[0, j] = D[0, j] + C[0, j-1]
+            
+            # Fill the rest using the recurrence relation:
+            # C[i,j] = D[i,j] + min(C[i-1,j], C[i,j-1], C[i-1,j-1])
+            for i in range(1, N):
+                for j in range(1, M):
+                    C[i, j] = D[i, j] + min(
+                        C[i-1, j],      # vertical move (insertion in Y)
+                        C[i, j-1],      # horizontal move (insertion in X)
+                        C[i-1, j-1]     # diagonal move (match)
+                    )
+            
+            # Step 3: DTW distance is the final accumulated cost
+            dtw_distance = C[N-1, M-1]
+            
+            # Step 4: Normalize by path length for better comparison
+            # The path length K is approximately max(N, M) for typical alignments
+            path_length = max(N, M)
+            normalized_dtw_distance = dtw_distance / path_length
+            
+            # Step 5: Convert distance to similarity score (0.0 to 1.0)
+            # Use a sigmoid-like function to convert distance to similarity
+            # Higher distance -> lower similarity
+            max_expected_distance = 60.0  # Very lenient threshold for maximum timing tolerance
+            dtw_score = max(0.0, 1.0 - (normalized_dtw_distance / max_expected_distance))
+            
+            # Step 6: Optional - Find the warping path (for debugging/visualization)
+            warping_path = self._backtrack_warping_path(C, N, M)
+            
+            print(f"🎯 DTW Debug: distance={dtw_distance:.3f}, normalized={normalized_dtw_distance:.3f}, score={dtw_score:.3f}, path_len={len(warping_path)}")
+            
+            return dtw_score, warping_path
             
         except Exception as e:
             print(f"DTW calculation failed: {e}")
+            import traceback
+            traceback.print_exc()
             return 0.0, []
+    
+    def _backtrack_warping_path(self, C: np.ndarray, N: int, M: int) -> List[Tuple[int, int]]:
+        """
+        Backtrack to find the optimal warping path from the accumulated cost matrix.
+        Returns the path from (N-1, M-1) to (0, 0).
+        """
+        path = []
+        i, j = N - 1, M - 1
+        
+        # Start from the end and work backwards
+        while i > 0 or j > 0:
+            path.append((i, j))
+            
+            # Find the minimum cost neighbor
+            if i == 0:
+                j -= 1
+            elif j == 0:
+                i -= 1
+            else:
+                min_cost = min(C[i-1, j], C[i, j-1], C[i-1, j-1])
+                if C[i-1, j-1] == min_cost:
+                    i -= 1
+                    j -= 1
+                elif C[i-1, j] == min_cost:
+                    i -= 1
+                else:
+                    j -= 1
+        
+        # Add the starting point
+        path.append((0, 0))
+        
+        # Reverse to get the path from start to end
+        return list(reversed(path))
+    
+    def _calculate_pose_distance(self, pose1: np.ndarray, pose2: np.ndarray) -> float:
+        """Calculate Euclidean distance between two poses."""
+        try:
+            vec1 = pose1.flatten()
+            vec2 = pose2.flatten()
+            
+            if len(vec1) != len(vec2):
+                return 2.0  # Maximum distance for mismatched dimensions
+            
+            return np.linalg.norm(vec1 - vec2)
+        except:
+            return 2.0  # Maximum distance on error
     
     def update_user_pose(self, user_landmarks: np.ndarray, timestamp: float = None) -> Dict[str, Any]:
         """Update user pose and calculate similarity scores."""
@@ -383,6 +503,13 @@ class PoseComparisonService:
         if 0 <= index < len(self.reference_landmarks):
             return self.reference_landmarks[index]
         return None
+    
+    def get_reference_angles_at_index(self, index: int) -> Dict[str, float]:
+        """Get reference angles at specific index."""
+        if 0 <= index < len(self.reference_landmarks):
+            landmarks = self.reference_landmarks[index]
+            return self.angle_calculator.calculate_angles(landmarks)
+        return {}
     
     def get_reference_motion_at_index(self, index: int) -> Optional[np.ndarray]:
         """Get reference motion at specific index."""

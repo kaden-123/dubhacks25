@@ -13,7 +13,7 @@ import { PracticeControlBar } from '../components/PracticeControlBar';
 // Removed useSnapshotCapture - using LiveCameraView directly
 import { useDanceSession } from '../hooks/useDanceSession';
 // Removed mock feedback service - using real backend
-import { ProcessSnapshotResponse } from '../services/danceAPI';
+import { ProcessSnapshotResponse, danceAPI } from '../services/danceAPI';
 
 interface EnhancedPracticePageProps {
   routineId: string;
@@ -46,8 +46,16 @@ export function EnhancedPracticePage({ routineId, onBack, onReview, onSettings }
   const [videoEnded, setVideoEnded] = useState(false);
   const [autoNavigateCountdown, setAutoNavigateCountdown] = useState(5);
 
-  // Video reference
-  const videoSrc = `/videos/magnetic.mp4`; // Video file in public folder
+  // Video reference - map routineId to video file
+  const getVideoSrc = (routineId: string) => {
+    const videoMapping: Record<string, string> = {
+      '1': '/videos/magnetic.mp4',  // Magnetic by ILLIT
+      '7': '/videos/TEST.mov',      // Kaden Test
+    };
+    return videoMapping[routineId] || '/videos/magnetic.mp4'; // Default to magnetic
+  };
+  
+  const videoSrc = getVideoSrc(routineId);
 
   if (!routine) {
     return <div>Routine not found</div>;
@@ -91,7 +99,7 @@ export function EnhancedPracticePage({ routineId, onBack, onReview, onSettings }
   };
 
   // Handle video end
-  const handleVideoEnd = () => {
+  const handleVideoEnd = async () => {
     console.log('Video ended - pausing feedback and showing congratulations');
     setVideoEnded(true);
     setIsPlaying(false);
@@ -100,17 +108,26 @@ export function EnhancedPracticePage({ routineId, onBack, onReview, onSettings }
     pauseProcessing();
     stopAutoCapture();
     
+    // Get feedback summary from backend
+    try {
+      const summary = await danceAPI.getFeedbackSummary();
+      console.log('Feedback summary received:', summary);
+      // Store summary for review page
+      sessionStorage.setItem('feedbackSummary', JSON.stringify(summary));
+    } catch (error) {
+      console.error('Failed to get feedback summary:', error);
+    }
+    
     // Show congratulations popup
     setShowCongratulations(true);
     setAutoNavigateCountdown(5);
     
-    // Start countdown for auto-navigation
+    // Start countdown to close congratulations popup (no auto-navigation)
     const countdownInterval = setInterval(() => {
       setAutoNavigateCountdown((prev) => {
         if (prev <= 1) {
           clearInterval(countdownInterval);
           setShowCongratulations(false);
-          onReview();
           return 0;
         }
         return prev - 1;
@@ -145,6 +162,75 @@ export function EnhancedPracticePage({ routineId, onBack, onReview, onSettings }
 
   // Simple state for auto-capture
   const [isCapturing, setIsCapturing] = useState(false);
+
+  // Helper functions for processing control
+  const pauseProcessing = () => {
+    setIsCapturing(false);
+    console.log('Processing paused');
+  };
+
+  const resumeProcessing = () => {
+    setIsCapturing(true);
+    console.log('Processing resumed');
+  };
+
+  const startAutoCapture = () => {
+    setIsCapturing(true);
+    console.log('Auto capture started');
+  };
+
+  const stopAutoCapture = () => {
+    setIsCapturing(false);
+    console.log('Auto capture stopped');
+  };
+
+  const startCountdown = () => {
+    setCountdown(3);
+    const countdownInterval = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev === null || prev <= 1) {
+          clearInterval(countdownInterval);
+          setCountdown(null);
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  // Handle play/pause toggle
+  const handlePlayPause = async () => {
+    if (videoEnded) return; // Don't allow play/pause after video ends
+    
+    const wasPlaying = isPlaying;
+    setIsPlaying(!wasPlaying);
+    
+    if (!wasPlaying) {
+      // Starting to play
+      if (!hasStarted) {
+        setHasStarted(true);
+        startCountdown();
+      } else {
+        // Resuming
+        resumeProcessing();
+        startAutoCapture();
+      }
+    } else {
+      // Pausing - get feedback summary
+      pauseProcessing();
+      stopAutoCapture();
+      
+      // Get feedback summary when pausing
+      try {
+        const summary = await danceAPI.getFeedbackSummary();
+        console.log('Feedback summary on pause:', summary);
+        // Store summary for review page
+        sessionStorage.setItem('feedbackSummary', JSON.stringify(summary));
+      } catch (error) {
+        console.error('Failed to get feedback summary on pause:', error);
+      }
+    }
+  };
 
   // Dance session hook
   const {
@@ -182,9 +268,9 @@ export function EnhancedPracticePage({ routineId, onBack, onReview, onSettings }
       let feedback;
       if (isSessionActive) {
         console.log('Processing snapshot with backend API');
-        // Use videoCurrentTime if available, otherwise use a fallback
-        const timestamp = videoCurrentTime > 0 ? videoCurrentTime : Date.now() / 1000;
-        console.log('📸 DEBUG: Sending snapshot with video timestamp:', timestamp, '(videoCurrentTime:', videoCurrentTime, ')');
+        // Use videoCurrentTime (even if 0, as that's the start of the video), otherwise use a fallback
+        const timestamp = videoCurrentTime !== undefined ? videoCurrentTime : Date.now() / 1000;
+        console.log('📸 DEBUG: Sending snapshot with video timestamp:', timestamp, '(videoCurrentTime:', videoCurrentTime, ', videoDuration:', videoDuration, ')');
         feedback = await processSnapshot(snapshot, timestamp);
       } else {
         // Try to start session if not active
@@ -192,8 +278,8 @@ export function EnhancedPracticePage({ routineId, onBack, onReview, onSettings }
         try {
           await startDanceSession();
           await loadReferenceVideo(routine.title.toLowerCase());
-          // Use videoCurrentTime if available, otherwise use a fallback
-          const timestamp = videoCurrentTime > 0 ? videoCurrentTime : Date.now() / 1000;
+          // Use videoCurrentTime (even if 0, as that's the start of the video), otherwise use a fallback
+          const timestamp = videoCurrentTime !== undefined ? videoCurrentTime : Date.now() / 1000;
           console.log('📸 DEBUG: Sending snapshot with video timestamp:', timestamp, '(videoCurrentTime:', videoCurrentTime, ')');
           feedback = await processSnapshot(snapshot, timestamp);
         } catch (error) {
@@ -214,19 +300,38 @@ export function EnhancedPracticePage({ routineId, onBack, onReview, onSettings }
         const newAccuracy = Math.round(feedback.comparison_result.combined_score * 100);
         console.log('📊 Setting accuracy to:', newAccuracy);
         
-        // Update overall accuracy based on combined score (running average)
-        setAccuracyHistory(prev => {
-          const updatedHistory = [...prev, newAccuracy];
-          const recentHistory = updatedHistory.slice(-10); // Keep only last 10 scores
-          const averageAccuracy = Math.round(
-            recentHistory.reduce((sum, acc) => sum + acc, 0) / recentHistory.length
-          );
-          console.log('📊 Updated accuracy history:', recentHistory, 'average:', averageAccuracy);
-          setOverallAccuracy(averageAccuracy);
-          return recentHistory;
-        });
+        // Only update accuracy history if we have a valid pose detected
+        if (feedback.pose_landmarks && feedback.pose_landmarks.length > 0) {
+          // Update overall accuracy based on combined score (running average of valid scores only)
+          setAccuracyHistory(prev => {
+            const updatedHistory = [...prev, newAccuracy];
+            const recentHistory = updatedHistory.slice(-10); // Keep only last 10 scores
+            const averageAccuracy = Math.round(
+              recentHistory.reduce((sum, acc) => sum + acc, 0) / recentHistory.length
+            );
+            console.log('📊 Updated accuracy history (valid pose):', recentHistory, 'average:', averageAccuracy);
+            setOverallAccuracy(averageAccuracy);
+            return recentHistory;
+          });
+        } else {
+          // No pose detected - slowly decrease accuracy
+          setAccuracyHistory(prev => {
+            const currentAvg = prev.length > 0 ? prev.reduce((sum, acc) => sum + acc, 0) / prev.length : overallAccuracy;
+            const newAvg = Math.max(0, currentAvg - 5); // Drop by 5% each time
+            console.log('📊 No pose detected, decreasing accuracy from', currentAvg, 'to', newAvg);
+            setOverallAccuracy(Math.round(newAvg));
+            return prev; // Don't add invalid scores to history
+          });
+        }
       } else {
-        console.log('❌ No comparison_result, keeping accuracy at:', overallAccuracy);
+        // No comparison result - slowly decrease accuracy
+        setAccuracyHistory(prev => {
+          const currentAvg = prev.length > 0 ? prev.reduce((sum, acc) => sum + acc, 0) / prev.length : overallAccuracy;
+          const newAvg = Math.max(0, currentAvg - 5); // Drop by 5% each time
+          console.log('📊 No comparison result, decreasing accuracy from', currentAvg, 'to', newAvg);
+          setOverallAccuracy(Math.round(newAvg));
+          return prev;
+        });
       }
 
       console.log('Feedback received:', feedback);
@@ -299,7 +404,10 @@ export function EnhancedPracticePage({ routineId, onBack, onReview, onSettings }
 
   // Generate current tip from feedback
   console.log('🔍 Generating currentTip from currentFeedback:', currentFeedback);
-  const currentTip: PracticeTip | undefined = currentFeedback?.live_feedback ? {
+  // Only show feedback when we have valid pose landmarks and live feedback
+  const currentTip: PracticeTip | undefined = (currentFeedback?.live_feedback && 
+                                               currentFeedback?.pose_landmarks && 
+                                               currentFeedback.pose_landmarks.length > 0) ? {
     joint: 'General',
     message: currentFeedback.live_feedback,
     beatIndex: Math.floor(videoCurrentTime * 2), // Convert time to approximate beat index
@@ -596,7 +704,7 @@ export function EnhancedPracticePage({ routineId, onBack, onReview, onSettings }
                   duration={videoDuration}
                   onTimeUpdate={handleVideoTimeUpdate}
                   onLoadedMetadata={setVideoDuration}
-                  onPlayPause={videoEnded ? undefined : () => setIsPlaying(!isPlaying)}
+                  onPlayPause={videoEnded ? undefined : handlePlayPause}
                   onSeek={videoEnded ? undefined : handleVideoSeek}
                   onRestart={videoEnded ? undefined : () => {
                     // Go back 10 seconds instead of to beginning
@@ -633,8 +741,8 @@ export function EnhancedPracticePage({ routineId, onBack, onReview, onSettings }
           <div className="absolute bg-gradient-to-b from-[#0f1219] h-[80.8px] left-0 to-[#0f1219] top-[674.4px] via-50% via-[#13161f] w-full">
             <PracticeControlBar
               isPlaying={isPlaying}
-              onPlayPause={videoEnded ? undefined : () => setIsPlaying(!isPlaying)}
-              onRestart={videoEnded ? undefined : () => {
+              onPlayPause={videoEnded ? () => {} : handlePlayPause}
+              onRestart={videoEnded ? () => {} : () => {
                 // Go back 10 seconds instead of to beginning
                 const newTime = Math.max(0, videoCurrentTime - 10);
                 handleVideoSeek(newTime);

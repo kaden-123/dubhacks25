@@ -17,6 +17,19 @@ export const mockRoutines: Routine[] = [
     ],
   },
   {
+    id: '7',
+    title: 'Kaden Test',
+    artist: 'Kaden',
+    coverUrl: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx0ZXN0aW5nJTIwZGFuY2V8ZW58MXx8fHwxNzYwNzMwNjY2fA&ixlib=rb-4.1.0&q=80&w=1080',
+    bpm: 120,
+    difficulty: 'Beginner',
+    duration: 60,
+    tags: ['test', 'practice', 'custom'],
+    segments: [
+      { id: 's1', name: 'Test Routine', startBeat: 0, endBeat: 32, beats: 32 },
+    ],
+  },
+  {
     id: '2',
     title: 'Kill This Love',
     artist: 'BLACKPINK',
@@ -97,4 +110,4 @@ export const defaultSettings: Settings = {
   mirrorCamera: true,
 };
 
-export const recentPracticeIds = ['1', '3'];
+export const recentPracticeIds = ['1', '3', '7'];

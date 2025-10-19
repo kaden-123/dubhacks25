@@ -142,9 +142,19 @@ export function LibraryPage({ onSelectRoutine, onContinue }: LibraryPageProps) {
         {/* All Routines Grid */}
         <div className="space-y-4">
           <h2>All Routines</h2>
-          {filteredRoutines.length === 0 && (
+          {filteredRoutines.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <p>No routines found matching your filters.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+              {filteredRoutines.map((routine) => (
+                <RoutineCard
+                  key={routine.id}
+                  routine={routine}
+                  onClick={() => onSelectRoutine(routine.id)}
+                />
+              ))}
             </div>
           )}
         </div>

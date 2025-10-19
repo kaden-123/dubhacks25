@@ -37,6 +37,7 @@ class SnapshotData:
     - Video frame for visual analysis
     - Pose comparison metrics
     - Timing information
+    - Detailed pose data and angles
     """
     timestamp: float  # Seconds since dance started
     frame_base64: str  # Base64-encoded JPEG snapshot
@@ -46,12 +47,18 @@ class SnapshotData:
     motion_similarity: float  # 0.0-1.0
     combined_score: float  # 0.0-1.0
 
+    # Detailed pose data for LLM analysis
+    pose_landmarks: Optional[np.ndarray] = None  # Current user pose landmarks
+    reference_landmarks: Optional[np.ndarray] = None  # Reference pose landmarks
+    preprocessed_angles: Dict[str, float] = field(default_factory=dict)  # Calculated angles
+    reference_angles: Dict[str, float] = field(default_factory=dict)  # Reference angles
+    best_match_idx: int = 0  # Index of best matching reference frame
+
     # Specific errors detected (optional - from comparison engine)
     errors: List[Dict[str, Any]] = field(default_factory=list)
     # Example error: {"body_part": "left_elbow", "expected_angle": 145, "actual_angle": 95, "difference": 50}
 
     # Reference matching
-    best_match_idx: int = 0  # Index of best matching reference frame
     reference_timestamp: float = 0.0  # Expected timestamp in reference video
     timing_offset: float = 0.0  # User ahead/behind reference (seconds)
 
@@ -266,9 +273,12 @@ class LiveFeedbackService:
                 {
                     "role": "system",
                     "content": (
-                        "You are a real-time K-pop dance coach providing instant feedback. "
-                        "Be concise, specific, and encouraging. Focus on ONE immediate correction "
-                        "or encouragement. Keep responses under 50 words."
+                        "You are an expert K-pop dance coach providing real-time feedback. "
+                        "Analyze the detailed angle and position data to give ONE specific, actionable correction. "
+                        "Focus on the most critical issue that needs immediate attention. "
+                        "Be direct, specific about body parts (left arm, right leg, etc.), and encouraging. "
+                        "Use dance terminology. Keep responses under 40 words. "
+                        "Examples: 'Extend your left arm higher!' or 'Bend your right knee more!' or 'Great timing!'"
                     )
                 },
                 {
@@ -276,8 +286,8 @@ class LiveFeedbackService:
                     "content": prompt
                 }
             ],
-            max_tokens=100,
-            temperature=0.7
+            max_tokens=80,
+            temperature=0.3
         )
 
         feedback_text = response.choices[0].message.content.strip()
@@ -300,24 +310,56 @@ class LiveFeedbackService:
 
     def _build_live_prompt_with_pose_data(self, snapshot: SnapshotData) -> str:
         """
-        Build prompt for live feedback generation.
+        Build prompt for live feedback generation with detailed pose data.
 
-        Includes current snapshot data + rolling context.
+        Includes current snapshot data + rolling context + detailed angles and landmarks.
         """
         context_summary = self.context.get_summary()
 
         prompt = f"""Current dance moment (timestamp: {snapshot.timestamp:.1f}s):
 
 **Performance Score:** {snapshot.combined_score*100:.0f}% match with reference
+**Pose Score:** {snapshot.pose_similarity*100:.0f}% | **Motion Score:** {snapshot.motion_similarity*100:.0f}%
 **Trend:** {context_summary['trend']}
 """
+
+        # Add detailed angle comparison if available
+        if snapshot.preprocessed_angles and snapshot.reference_angles:
+            prompt += "\n**Detailed Angle Analysis:**\n"
+            for angle_name, user_angle in snapshot.preprocessed_angles.items():
+                if angle_name in snapshot.reference_angles:
+                    ref_angle = snapshot.reference_angles[angle_name]
+                    difference = abs(user_angle - ref_angle)
+                    status = "✓" if difference < 15 else "⚠" if difference < 30 else "✗"
+                    prompt += f"{status} {angle_name}: You {user_angle:.0f}° vs Reference {ref_angle:.0f}° (diff: {difference:.0f}°)\n"
+
+        # Add specific landmark differences if available
+        if snapshot.pose_landmarks is not None and snapshot.reference_landmarks is not None:
+            # Calculate major landmark differences
+            key_landmarks = {
+                'left_shoulder': 11, 'right_shoulder': 12,
+                'left_elbow': 13, 'right_elbow': 14,
+                'left_wrist': 15, 'right_wrist': 16,
+                'left_hip': 23, 'right_hip': 24,
+                'left_knee': 25, 'right_knee': 26,
+                'left_ankle': 27, 'right_ankle': 28
+            }
+            
+            prompt += "\n**Key Body Position Analysis:**\n"
+            for landmark_name, idx in key_landmarks.items():
+                if idx < len(snapshot.pose_landmarks) and idx < len(snapshot.reference_landmarks):
+                    user_pos = snapshot.pose_landmarks[idx][:3]  # x, y, z coordinates
+                    ref_pos = snapshot.reference_landmarks[idx][:3]
+                    distance = np.linalg.norm(user_pos - ref_pos)
+                    status = "✓" if distance < 0.05 else "⚠" if distance < 0.1 else "✗"
+                    prompt += f"{status} {landmark_name}: Distance {distance:.3f} from reference\n"
 
         # Add timing information
         if abs(snapshot.timing_offset) > 0.2:  # More than 0.2s off
             if snapshot.timing_offset > 0:
-                prompt += f"**Timing:** You're {snapshot.timing_offset:.1f}s ahead of the reference\n"
+                prompt += f"\n**Timing:** You're {snapshot.timing_offset:.1f}s ahead of the reference\n"
             else:
-                prompt += f"**Timing:** You're {abs(snapshot.timing_offset):.1f}s behind the reference\n"
+                prompt += f"\n**Timing:** You're {abs(snapshot.timing_offset):.1f}s behind the reference\n"
 
         # Add specific errors
         if snapshot.errors:
@@ -332,8 +374,9 @@ class LiveFeedbackService:
             prompt += f"\n**Persistent Issues:** {', '.join(context_summary['persistent_issues'])}\n"
 
         prompt += """
-Provide ONE specific, actionable correction or encouragement for this moment.
-Focus on the most impactful improvement. Be conversational and brief (under 50 words).
+Based on the analysis above, give ONE specific correction or encouragement.
+Focus on the biggest issue. Be direct and specific about which body part needs adjustment.
+Examples: "Extend your left arm higher!" "Bend your right knee more!" "Great form!"
 """
 
         return prompt

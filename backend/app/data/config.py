@@ -33,8 +33,8 @@ class Settings(BaseSettings):
 
     # LLM Settings
     llm_model: str = "gpt-4o-mini"  # or "gpt-4o" for better quality
-    llm_max_tokens: int = 150
-    llm_temperature: float = 0.7
+    llm_max_tokens: int = 120
+    llm_temperature: float = 0.3  # Lower temperature for more focused responses
     max_feedback_items_per_section: int = 5
 
     class Config:
