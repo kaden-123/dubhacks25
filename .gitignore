@@ -1,0 +1,77 @@
+# Environment Variables - CRITICAL: No API keys in repo!
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+!.env.example
+
+# API Keys and Secrets
+**/secrets/
+**/credentials/
+*.key
+*.pem
+config/secrets.json
+config/credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Build outputs
+build/
+dist/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Testing
+.pytest_cache/
+.coverage
+coverage/
+
+# Temporary files
+*.tmp
+temp/
+tmp/
+
+# Uploads and media (may contain user data)
+uploads/
+*.mp4
+*.avi
+*.mov
+
+# Frontend data files
+frontend/src/data/*.mp4
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# MediaPipe model files (large files)
+*.task
