@@ -9,3 +9,9 @@ __pycache__/
 
 #models
 *.task
+
+#data
+*.png
+*.jpg
+*.mp4
+*.MOV

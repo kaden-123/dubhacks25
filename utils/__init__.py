@@ -1,2 +1,4 @@
 from .pose_process import ProcessPose
-__all__ = ['ProcessPose']
+
+from .pre_process import process_video
+from .pre_process import process_image
