@@ -30,8 +30,7 @@ def process_video(model):
         if not success:
             break
     
-        numpy_image = frame.to_ndarray(format="bgr24")
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(numpy_image, cv2.COLOR_BGR2RGB))
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         result.append(process_pose.process_image(mp_image))
 
         frame_idx += 1
@@ -61,3 +60,22 @@ def choose_file(file_list):
     
     choice = int(input(f"Select a File by number: "))
     return file_list[choice]
+
+def main():
+    print("Select what to process:")
+    print("1: Process a video")
+    print("2: Process an image")
+    
+    choice = input("Enter 1 or 2: ").strip()
+
+    model = "pose_landmarker_lite.task"  
+
+    if choice == "1":
+        process_video(model)
+    elif choice == "2":
+        process_image(model)
+    else:
+        print("Invalid choice. Please enter 1 or 2.")
+        main() 
+
+main()

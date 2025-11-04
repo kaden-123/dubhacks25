@@ -10,8 +10,12 @@ __pycache__/
 #models
 *.task
 
-#data
+#raw data
 *.png
 *.jpg
 *.mp4
 *.MOV
+
+#proceseed data
+*.pkl
+*.npy
