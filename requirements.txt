@@ -6,3 +6,4 @@ numpy
 dtaidistance
 matplotlib
 pathlib
+pickle

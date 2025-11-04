@@ -1,7 +1,7 @@
 import numpy as np
 from dtaidistance import dtw
-
-
+import pickle
+from pathlib import Path
 
 class PoseCompare:
     """Saves both the user's and reference video's position and motion vectors and their differences.
@@ -33,9 +33,9 @@ class PoseCompare:
         dict that contains the compared data between user and ref video
     """
     def __init__(self,
-                pos_tolerance=0,
-                vel_tolerance=0,
-                accel_tolerance=0):
+                pos_tolerance = 0,
+                vel_tolerance = 0,
+                accel_tolerance = 0):
 
         # tolerances used for comparison ie if abs(diff) < tolerance, diff is set to 0
         self.tolerances = {
@@ -116,7 +116,7 @@ class PoseCompare:
 
         Parameters
         ----------
-        frame: PoseLandmarker Result (non-processed result after detecting pose)
+        frame: PoseLandmarker Result (raw result after detecting pose)
             The frame's pose data that is to be processed/appended to the session data
 
         Returns
@@ -136,19 +136,16 @@ class PoseCompare:
         for axis in ['x', 'y', 'z']:
             self.session_data['position'][axis].append(current_coords[axis])
 
-        # calc velocity if we have two frames
-        if len(self.session_data['position']['x']) > 1:
-            for axis in ['x', 'y', 'z']:
-                velocity = (self.session_data['position'][axis][-1] - 
-                           self.session_data['position'][axis][-2])
+        for axis in ['x', 'y', 'z']:
+            # calc velocity if we have at least 2 positions
+            if len(self.session_data['position'][axis]) > 1:
+                velocity = self.session_data['position'][axis][-1] - self.session_data['position'][axis][-2]
                 self.session_data['velocity'][axis].append(velocity)
 
-        # calculate acceleration if two velc exist
-        if len(self.session_data['velocity']['x']) > 1:
-            for axis in ['x', 'y', 'z']:
-                acceleration = (self.session_data['velocity'][axis][-1] - 
-                               self.session_data['velocity'][axis][-2])
-                self.session_data['acceleration'][axis].append(acceleration)
+                # calc accel if we have at least 2 vel
+                if len(self.session_data['velocity'][axis]) > 1:
+                    acceleration = self.session_data['velocity'][axis][-1] - self.session_data['velocity'][axis][-2]
+                    self.session_data['acceleration'][axis].append(acceleration)
 
         # calculate and append differences for all motion/position
         for data_type in ['position', 'velocity', 'acceleration']:
@@ -176,3 +173,43 @@ class PoseCompare:
         diff = ref_list[frame_idx] - session_list[-1]
         diff[np.abs(diff) < tolerance] = 0
         return diff
+
+    # add non pickle support cause it only pickling
+    def load_reference(self, media):
+        """Loads this object with reference data
+
+        Paramters
+        ---------
+        media: str
+            name of the reference video that is to be loaded (include media format)
+        """
+        with open(media, "rb") as f:
+            data = pickle.load(f)
+        
+        # load coordinates
+        for frame in data:
+            landmarks_list = frame.pose_landmarks
+
+            if not landmarks_list:
+                continue
+
+            coords = {
+                'x': np.array([landmarks.x for landmarks in frame.pose_landmarks[0]]),
+                'y': np.array([landmarks.y for landmarks in frame.pose_landmarks[0]]),
+                'z': np.array([landmarks.z for landmarks in frame.pose_landmarks[0]])
+            }
+
+            for axis in ['x', 'y', 'z']:
+                self.reference_data['position'][axis].append(coords[axis])
+
+        # create ref vel and accel stuff
+        if len(self.reference_data['position']['x']) > 1:
+            for axis in ['x', 'y', 'z']:
+                positions = self.reference_data['position'][axis]
+                velocities = [positions[i] - positions[i-1] for i in range(1, len(positions))]
+                self.reference_data['velocity'][axis] = velocities
+
+                if len(velocities) > 1:
+                    accelerations = [velocities[i] - velocities[i-1] for i in range(1, len(velocities))]
+                    self.reference_data['acceleration'][axis] = accelerations
+
