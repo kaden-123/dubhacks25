@@ -7,3 +7,4 @@ dtaidistance
 matplotlib
 pathlib
 pickle
+time

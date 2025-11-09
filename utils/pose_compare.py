@@ -124,6 +124,8 @@ class PoseCompare:
         None
         """
         landmarks_list = frame.pose_landmarks
+        #flatten array
+        landmarks_list = landmarks_list[0]
 
         # get landmarks from frame
         current_coords = {
@@ -131,10 +133,12 @@ class PoseCompare:
             'y': np.array([landmarks.y for landmarks in landmarks_list]),
             'z': np.array([landmarks.z for landmarks in landmarks_list])
         }
+        print("Successfully got current coords!")
 
         # append new coord to dict
         for axis in ['x', 'y', 'z']:
             self.session_data['position'][axis].append(current_coords[axis])
+        print("Successfully appended new coords to dict!")
 
         for axis in ['x', 'y', 'z']:
             # calc velocity if we have at least 2 positions
@@ -143,9 +147,10 @@ class PoseCompare:
                 self.session_data['velocity'][axis].append(velocity)
 
                 # calc accel if we have at least 2 vel
-                if len(self.session_data['velocity'][axis]) > 1:
-                    acceleration = self.session_data['velocity'][axis][-1] - self.session_data['velocity'][axis][-2]
-                    self.session_data['acceleration'][axis].append(acceleration)
+            if len(self.session_data['velocity'][axis]) > 1:
+                acceleration = self.session_data['velocity'][axis][-1] - self.session_data['velocity'][axis][-2]
+                self.session_data['acceleration'][axis].append(acceleration)
+        print("Got past the calc vel and accel yay!")
 
         # calculate and append differences for all motion/position
         for data_type in ['position', 'velocity', 'acceleration']:
@@ -156,23 +161,30 @@ class PoseCompare:
                     self.tolerances[data_type]
                 )
                 self.compared_data[data_type][axis].append(diff)
+        print("appended differences successfully!")
     
     def _diff_with_tolerance(self, ref_list, session_list, tolerance):
         """Calculate diff between reference and session data with tolerance threshold"""
         if tolerance is None:
             tolerance = 0
         
-        # get he latest frame index
-        frame_idx = len(session_list) - 1
+        # in if statement to prevent comparing non existent indexes if list is empty cause accel will be empty
+        # until like three frames, OR i guess you can initilize those motion vectors with some values first idk.
+        if len(session_list) > 1:
+            # get the latest frame index
+            frame_idx = len(session_list) - 1
+            # if latest frame in session is greater ref, fall back to last frame in reference.
+            if frame_idx >= len(ref_list):
+                frame_idx = len(ref_list) - 1
+            
+            # calc difference and apply tolerance
+            diff = ref_list[frame_idx] - session_list[-1]
+            diff[np.abs(diff) < tolerance] = 0
+            return diff
+        else:
+            return 0
         
-        # if latest frame in session is greater ref, fall back to last frame in reference.
-        if frame_idx >= len(ref_list):
-            frame_idx = len(ref_list) - 1
         
-        # calc difference and apply tolerance
-        diff = ref_list[frame_idx] - session_list[-1]
-        diff[np.abs(diff) < tolerance] = 0
-        return diff
 
     # add non pickle support cause it only pickling
     def load_reference(self, media):
