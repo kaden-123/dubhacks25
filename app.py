@@ -94,6 +94,7 @@ webrtc_streamer(
     async_processing=True
 )
 
+# gonna use a while loop for now, note that anything below this will NOT update accordingly
 while True:
     accuracy_display.metric("Accuracy", f"{tracker['accuracy']:.2f}%")
     time.sleep(1)
