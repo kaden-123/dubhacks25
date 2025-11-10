@@ -160,7 +160,7 @@ class PoseCompare:
                     self.session_data[data_type][axis],
                     self.tolerances[data_type]
                 )
-                #print(f"diff is {diff}")
+                print(f"diff is {diff}")
                 print(f"axis: {axis}")
                 print(f"data_type: {data_type}")
                 self.compared_data[data_type][axis].append(diff)
