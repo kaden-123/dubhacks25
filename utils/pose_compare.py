@@ -160,17 +160,23 @@ class PoseCompare:
                     self.session_data[data_type][axis],
                     self.tolerances[data_type]
                 )
+                #print(f"diff is {diff}")
+                print(f"axis: {axis}")
+                print(f"data_type: {data_type}")
                 self.compared_data[data_type][axis].append(diff)
         print("appended differences successfully!")
     
     def _diff_with_tolerance(self, ref_list, session_list, tolerance):
         """Calculate diff between reference and session data with tolerance threshold"""
+
+        if len(ref_list) == 0: # if nothing in ref list just return 0
+            return 0
         if tolerance is None:
             tolerance = 0
         
         # in if statement to prevent comparing non existent indexes if list is empty cause accel will be empty
         # until like three frames, OR i guess you can initilize those motion vectors with some values first idk.
-        if len(session_list) > 1:
+        if len(session_list) >= 1:
             # get the latest frame index
             frame_idx = len(session_list) - 1
             # if latest frame in session is greater ref, fall back to last frame in reference.
@@ -193,35 +199,42 @@ class PoseCompare:
         Paramters
         ---------
         media: str
-            name of the reference video that is to be loaded (include media format)
+            name of the reference video that is to be loaded (include media format & abs path)
         """
-        with open(media, "rb") as f:
-            data = pickle.load(f)
-        
-        # load coordinates
-        for frame in data:
-            landmarks_list = frame.pose_landmarks
+        data = np.load(media, allow_pickle = True) 
+        if isinstance(data, list): # cause i cant iterate over sometihng not a list yay
+            for frame in data:
+                landmarks_list = frame.pose_landmarks
 
-            if not landmarks_list:
-                continue
+                if not landmarks_list:
+                    continue
 
+                coords = {
+                    'x': np.array([landmarks.x for landmarks in landmarks_list[0]]),
+                    'y': np.array([landmarks.y for landmarks in landmarks_list[0]]),
+                    'z': np.array([landmarks.z for landmarks in landmarks_list[0]])
+                }
+
+                for axis in ['x', 'y', 'z']:
+                    self.reference_data['position'][axis].append(coords[axis])
+
+            # create ref vel and accel stuff
+            if len(self.reference_data['position']['x']) > 1:
+                for axis in ['x', 'y', 'z']:
+                    positions = self.reference_data['position'][axis]
+                    velocities = [positions[i] - positions[i-1] for i in range(1, len(positions))]
+                    self.reference_data['velocity'][axis] = velocities
+
+                    if len(velocities) > 1:
+                        accelerations = [velocities[i] - velocities[i-1] for i in range(1, len(velocities))]
+                        self.reference_data['acceleration'][axis] = accelerations
+        else: #this means we loaded an image
+            landmarks_list = data.tolist().pose_landmarks
             coords = {
-                'x': np.array([landmarks.x for landmarks in frame.pose_landmarks[0]]),
-                'y': np.array([landmarks.y for landmarks in frame.pose_landmarks[0]]),
-                'z': np.array([landmarks.z for landmarks in frame.pose_landmarks[0]])
+                    'x': np.array([landmarks.x for landmarks in landmarks_list[0]]),
+                    'y': np.array([landmarks.y for landmarks in landmarks_list[0]]),
+                    'z': np.array([landmarks.z for landmarks in landmarks_list[0]])
             }
-
             for axis in ['x', 'y', 'z']:
                 self.reference_data['position'][axis].append(coords[axis])
-
-        # create ref vel and accel stuff
-        if len(self.reference_data['position']['x']) > 1:
-            for axis in ['x', 'y', 'z']:
-                positions = self.reference_data['position'][axis]
-                velocities = [positions[i] - positions[i-1] for i in range(1, len(positions))]
-                self.reference_data['velocity'][axis] = velocities
-
-                if len(velocities) > 1:
-                    accelerations = [velocities[i] - velocities[i-1] for i in range(1, len(velocities))]
-                    self.reference_data['acceleration'][axis] = accelerations
 
