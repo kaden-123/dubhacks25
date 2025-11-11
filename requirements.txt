@@ -1,10 +1,9 @@
-mediapipe
-streamlit
-streamlit-webrtc 
-opencv-python
-numpy
-dtaidistance
-matplotlib
-pathlib
-pickle
-time
+mediapipe== 0.10.21
+streamlit==1.50.0
+streamlit-webrtc==0.63.11
+opencv-python==4.11.0.86
+numpy==1.26.4
+dtaidistance==2.3.13
+matplotlib==3.10.6
+python==3.10.15
+
