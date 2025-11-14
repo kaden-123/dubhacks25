@@ -11,9 +11,8 @@ from utils import ProcessPose
 from utils import PoseCompare
 from utils import thresh
 
-
 process_image = ProcessPose("pose_landmarker_lite.task")
-pose_compare = PoseCompare(0, 0, 0)
+pose_compare = PoseCompare(0.2, 0.2, 0.2) # set initial tolerance
 
 BASE_DIR = Path(__file__).resolve().parent
 MEDIA_BASE = BASE_DIR / "data" / "post"
@@ -37,7 +36,8 @@ pose_compare.load_reference(selected_file)
 tracker = {
     "num_frame": 1,
     "error_sum": 0,
-    "accuracy": 0
+    "total_accuracy": 0,
+    "relevant_accuracy": 0
 }
 
 def image_processing(frame):
@@ -64,9 +64,11 @@ def image_processing(frame):
 
         # calculate accuracy every 30 frames
         if tracker["num_frame"] % 30 == 0:
-            tracker["accuracy"] = tracker["error_sum"] / (tracker["num_frame"] * 3 * 33)  # cause 3 points and thresh calculates error per point
+            num_point_per_frame = 99 * 3 # 3 points 3 axis
+            tracker["relevant_accuracy"] = (1 - (error / num_point_per_frame)) * 100
+            tracker["total_accuracy"] = (1 - (tracker["error_sum"] / (tracker["num_frame"] * num_point_per_frame))) * 100  # cause 3 points and thresh calculates error per point
             # yes i hard coded 33 for the # of landmarks cause im desperate and i just want this to work pls help
-        print(f"Accuracy is {tracker['accuracy']}")
+        print(f"Accuracy is {tracker['total_accuracy']}")
 
         tracker["num_frame"] += 1
 
@@ -84,7 +86,9 @@ def image_processing(frame):
 
 
 # placeholder for accuracy metric
-accuracy_display = st.empty()  # placeholder
+total_accuracy_display = st.empty()  # placeholder
+relevant_accuracy_display = st.empty()
+
 
 # start WebRTC streamer
 webrtc_streamer(
@@ -96,7 +100,8 @@ webrtc_streamer(
 
 # gonna use a while loop for now, note that anything below this will NOT update accordingly
 while True:
-    accuracy_display.metric("Accuracy", f"{tracker['accuracy']:.2f}%")
+    relevant_accuracy_display.metric("Currentish Accuracy", f"{tracker['relevant_accuracy']:.2f}%")
+    total_accuracy_display.metric("Total Accuracy", f"{tracker['total_accuracy']:.2f}%")
     time.sleep(1)
 
 

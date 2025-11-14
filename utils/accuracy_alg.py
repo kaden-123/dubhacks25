@@ -15,8 +15,9 @@ def thresh(compared_data):
             if len(values) == 0:
                 continue
             last = values[-1]  # numpy array of landmark coords
-            if np.any(last != 0):  # <- FIXED HERE
-                error_count += 1
+            if last is None:
+                continue
+            error_count += np.count_nonzero(last)
     return error_count
 
 

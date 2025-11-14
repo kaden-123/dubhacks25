@@ -169,8 +169,8 @@ class PoseCompare:
     def _diff_with_tolerance(self, ref_list, session_list, tolerance):
         """Calculate diff between reference and session data with tolerance threshold"""
 
-        if len(ref_list) == 0: # if nothing in ref list just return 0
-            return 0
+        if len(ref_list) == 0: # if nothing in ref list just return null
+            return None
         if tolerance is None:
             tolerance = 0
         
@@ -188,7 +188,7 @@ class PoseCompare:
             diff[np.abs(diff) < tolerance] = 0
             return diff
         else:
-            return 0
+            return None
         
         
 
